@@ -38,8 +38,8 @@ gc = gspread.service_account(filename=CREDS_PATH)
 sheet_url = load_sheet_url()
 sh = gc.open_by_url(sheet_url)
 
-sheet1 = sh.worksheet("tCustomers")
-sheet2 = sh.worksheet("tOrders")
+sheet1 = sh.worksheet("Customers")
+sheet2 = sh.worksheet("Orders")
 
 
 # ==================================================
