@@ -22,13 +22,14 @@ from inventory_state import get_mode
 # CONFIG
 # ============================================
 
-BOT_TOKEN = "7479661726:AAFKFBbOK4dkZRBZ8QkeyrVLcxkkLg8k8go"
+BOT_TOKEN = "8497104307:AAHQiYmehz2ksg-GqdFpvIvAgx6V_PT4weQ"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-SOURCE_CHAT_ID = -1004220516742
-SOURCE_THREAD_ID = 4
+SOURCE_CHAT_ID = -1002870542147
+SOURCE_THREAD_ID = 473
 
-TARGET_CHAT_ID = -5144551975
+TARGET_CHAT_ID = -4942287748
+
 
 REQUEST_TIMEOUT = 60
 SHEET_RETRY = 3
@@ -357,6 +358,7 @@ def process():
             mode = get_mode(user_id)
 
             if mode:
+                if inventory.receive_analytics_date(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_photo(user_id, chat_id, photos, thread_id): continue
                 if inventory.receive_image_name(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_delete_name(user_id, chat_id, text, thread_id): continue
@@ -366,28 +368,47 @@ def process():
             cmd = text.lower().split("@")[0].strip()
             
             if cmd.startswith("/guide"):
+
                 log("📖 GUIDE REQUEST")
 
                 guide_text = (
-                    "📖 មគ្គុទេសក៍ប្រើប្រាស់\n\n"
-                    "🖼 មើលរូប - ឆែកមើលរូបក្នុងទិន្នន័យ\n"
-                    "➕ ថែមរូប - ថែមទិន្នន័យ (បន្ថែមរូបថ្មី)\n"
-                    "🗑 លុបរូប - លុបទិន្នន័យ\n"
-                    "🔍 ស្វែងរក - ស្វែងរកទិន្នន័យ\n"
-                    "❌ cancel - បញ្ឈប់ការដំណើរការ\n\n"
-                    "━━━━━━━━━━━━━━━\n"
-                    "💡 របៀបប្រើ:\n"
-                    "1. វាយ command ខាងលើ\n"
-                    "2. bot នឹងសួរបន្ត (if needed)\n"
-                    "3. follow instruction ក្នុង chat\n\n"
-                    "⚠️ ចំណាំ:\n"
-                    "- អាចប្រើ /មើលរូប@botname បាន\n"
-                    "- ឬ /មើលរូប ក៏បាន\n"
+                    "📖 មគ្គុទេសក៍ប្រើប្រាស់ Bot\n\n"
+
+                    "📦 គ្រប់គ្រងរូបភាព\n"
+                    "🖼 /មើលរូប\n"
+                    "    • ឆែកមើលរូបទាំងអស់ក្នុងទិន្នន័យ\n\n"
+
+                    "➕ /ថែមរូប\n"
+                    "    • បន្ថែមរូបអាវថ្មីទៅក្នុងទិន្នន័យ\n\n"
+
+                    "🗑 /លុបរូប\n"
+                    "    • លុបរូបចេញពីទិន្នន័យ\n\n"
+
+                    "🔍 /ស្វែងរក <ឈ្មោះ>\n"
+                    "    • ស្វែងរករូបអាវតាមឈ្មោះ\n"
+                    "    • ឧទាហរណ៍៖\n"
+                    "      /ស្វែងរក a001\n\n"
+
+                    "📊 /analytics\n"
+                    "    • មើលស្ថិតិការលក់\n\n"
+                    "    ឧទាហរណ៍៖\n"
+                    "    /analytics today\n"
+                    "    /analytics 29/06/26\n"
+                    "    /analytics 28/06/26 29/06/26\n\n"
+
+                    "❌ /cancel\n"
+                    "    • បញ្ឈប់ប្រតិបត្តិការដែលកំពុងដំណើរការ\n\n"
+
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "💡 ចំណាំ\n"
+                    "• Commands អាចប្រើក្នុង Group ឬ Topic បាន\n"
+                    "• សម្រាប់ការបន្ថែមរូប Bot នឹងណែនាំជាជំហានៗ\n"
+                    "• ថ្ងៃខែឆ្នាំត្រូវប្រើទម្រង់ dd/mm/yy\n"
                 )
 
                 send_text(chat_id, guide_text, thread_id)
                 continue
-            
+                        
             if cmd.startswith("/មើលរូប"):
                 inventory.view_all_grid(chat_id, thread_id)
                 continue
@@ -409,6 +430,67 @@ def process():
                 inventory.cancel(user_id, chat_id, thread_id)
                 continue
 
+            if cmd.startswith("/analytics"):
+
+                parts = text.strip().split()
+
+                try:
+
+                    if len(parts) == 1:
+                        send_text(
+                            chat_id,
+                            "Usage:\n"
+                            "/analytics today\n"
+                            "/analytics DD/MM/YY\n"
+                            "/analytics DD/MM/YY DD/MM/YY",
+                            thread_id,
+                        )
+                        continue
+
+                    from sheet_service import get_analytics
+
+                    if parts[1].lower() == "today":
+
+                        result = get_analytics("today")
+
+                    elif len(parts) == 2:
+
+                        result = get_analytics(parts[1])
+
+                    elif len(parts) == 3:
+
+                        result = get_analytics(parts[1], parts[2])
+
+                    else:
+
+                        send_text(chat_id, "Invalid command.", thread_id)
+                        continue
+
+                    if result["end_date"]:
+
+                        title = f"{result['start_date']} → {result['end_date']}"
+
+                    else:
+
+                        title = result["start_date"]
+
+                    msg = (
+                        f"📊 Analytics\n\n"
+                        f"📅 {title}\n\n"
+                        f"📦 Total Package : {result['total_package']} កញ្ចប់\n"
+                        f"💰 Total Revenue : ${result['total_revenue']}\n"
+                        f"👕 Total Shirt : {result['total_shirt']} ខោ/អាវ"
+                    )
+
+                    send_text(chat_id, msg, thread_id)
+
+                except Exception as e:
+
+                    log(f"❌ ANALYTICS ERROR: {e}")
+                    send_text(chat_id, "❌ Failed to fetch analytics.", thread_id)
+
+                continue
+
             if not (cmd.startswith("new") or cmd.startswith("cancel")):
                 continue
 
@@ -416,7 +498,11 @@ def process():
             if not parsed:
                 continue
 
-            parsed["order_id"] = generate_order_id()
+            try:
+                parsed["order_id"] = generate_order_id()
+            except Exception as e:
+                log(f"ORDER ID FAIL: {e}")
+                continue
 
             # ============================================
             # LOG BACK TO SOURCE THREAD

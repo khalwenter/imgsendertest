@@ -158,6 +158,7 @@ def cancel(user_id):
 # ============================================
 # AVAILABLE MODES
 # ============================================
+MODE_WAITING_ANALYTICS_DATE = "waiting_analytics_date"
 
 MODE_WAITING_PHOTO = "waiting_photo"
 

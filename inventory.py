@@ -19,12 +19,16 @@ from inventory_state import (
     get_data,
     update_data,
     clear_state,
+    has_state,
 
     MODE_WAITING_PHOTO,
     MODE_WAITING_IMAGE_NAME,
 
     MODE_WAITING_DELETE_NAME,
     MODE_WAITING_DELETE_CONFIRM,
+
+    MODE_WAITING_RENAME_OLD,
+    MODE_WAITING_RENAME_NEW,
 )
 
 
@@ -380,3 +384,57 @@ class InventoryManager:
 
         clear_state(user_id)
         self.telegram.send_text(chat_id, "Cancelled", thread_id)
+
+   # ============================================
+    # Analytics Flow
+    # ============================================
+    def start_analytics(self, user_id, chat_id, metric, thread_id=None):
+
+        set_state(
+            user_id,
+            MODE_WAITING_ANALYTICS_DATE,
+            {
+                "metric": metric
+            }
+        )
+
+        self.telegram.send_text(
+            chat_id,
+            "📅 សូមបញ្ចូលថ្ងៃ (format: 29/06/26)",
+            thread_id
+        )
+
+    # ============================================
+    # Analytics Flow
+    # ============================================
+    def receive_analytics_date(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ANALYTICS_DATE:
+            return False
+
+        date_value = text.strip()
+
+        data = get_data(user_id)
+        metric = data.get("metric")
+
+        clear_state(user_id)
+
+        try:
+            from sheet_service import get_analytics_data  # you will add this
+
+            result = get_analytics_data(date_value, metric)
+
+            self.telegram.send_text(
+                chat_id,
+                f"📊 Result for {date_value}\n\n{metric}: {result}",
+                thread_id
+            )
+
+        except Exception as e:
+            self.telegram.send_text(
+                chat_id,
+                f"❌ Error fetching data: {e}",
+                thread_id
+            )
+
+        return True
