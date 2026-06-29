@@ -14,10 +14,6 @@ from sheet_service import (
     order_exists
 )
 
-from inventory import InventoryManager
-from inventory_state import get_mode
-
-
 # ============================================
 # CONFIG
 # ============================================
@@ -36,69 +32,6 @@ SHEET_RETRY_DELAY = 5
 
 last_update_id = 0
 
-inventory = InventoryManager(BOT_TOKEN, img_folder="img")
-
-
-# ============================================
-# LOGGER
-# ============================================
-
-def log(text):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {text}")
-
-
-# ============================================
-# TELEGRAM
-# ============================================
-
-def send_text(chat_id, text, thread_id=None):
-    try:
-        data = {
-            "chat_id": chat_id,
-            "text": text
-        }
-
-        if thread_id is not None:
-            data["message_thread_id"] = thread_id
-
-        r = requests.post(
-            f"{API_URL}/sendMessage",
-            data=data,
-            timeout=REQUEST_TIMEOUT
-        )
-
-        return r.ok
-
-    except Exception as e:
-        log(f"❌ SEND TEXT ERROR: {e}")
-        return False
-
-
-def get_updates():
-    global last_update_id
-
-    params = {"timeout": 25}
-
-    if last_update_id:
-        params["offset"] = last_update_id
-
-    try:
-        r = requests.get(
-            f"{API_URL}/getUpdates",
-            params=params,
-            timeout=30
-        )
-
-        if r.status_code != 200:
-            return {"ok": False, "result": []}
-
-        return r.json()
-
-    except Exception as e:
-        log(f"❌ GET UPDATES ERROR: {e}")
-        return {"ok": False, "result": []}
-
 
 # ============================================
 # UTIL
@@ -111,6 +44,47 @@ def count_digits(s):
 def extract_price(line):
     m = re.search(r'(\$[\d.]+|[\d.]+\$)', line)
     return m.group(0) if m else ""
+
+
+# ============================================
+# TELEGRAM
+# ============================================
+
+def get_updates():
+    global last_update_id
+
+    params = {"timeout": 30}
+    if last_update_id:
+        params["offset"] = last_update_id
+
+    try:
+        r = requests.get(f"{API_URL}/getUpdates", params=params, timeout=REQUEST_TIMEOUT)
+        return r.json()
+    except Exception as e:
+        print("❌ GET UPDATES ERROR:", e)
+        return {"ok": False}
+
+
+def send_text(chat_id, text, thread_id=None):
+    try:
+        data = {"chat_id": chat_id, "text": text}
+
+        if thread_id:
+            data["message_thread_id"] = thread_id
+
+        r = requests.post(
+            f"{API_URL}/sendMessage",
+            data=data,
+            timeout=REQUEST_TIMEOUT
+        )
+        return r.ok
+    except Exception as e:
+        print("❌ SEND ERROR:", e)
+        return False
+
+
+def send_log_to_source(text):
+    send_text(SOURCE_CHAT_ID, text, SOURCE_THREAD_ID)
 
 
 # ============================================
@@ -191,7 +165,7 @@ def parse_message(text):
 
 
 # ============================================
-# IMAGE SENDING
+# IMAGE SENDING (FIXED)
 # ============================================
 
 def send_images(shirt_lines, chat_id):
@@ -200,8 +174,11 @@ def send_images(shirt_lines, chat_id):
     missing = []
     sent = 0
 
-    log("📤 IMAGE PROCESS START")
+    print("📤 START SENDING IMAGES...")
 
+    # =========================
+    # GROUP SHIRTS
+    # =========================
     for line in shirt_lines:
 
         tokens = line.split()
@@ -218,24 +195,38 @@ def send_images(shirt_lines, chat_id):
             if qty.isdigit():
                 grouped[shirt_id][size] += int(qty)
 
+    # =========================
+    # SEND IMAGES
+    # =========================
     for shirt_id, sizes in grouped.items():
+
+        print(f"➡️ Processing shirt: {shirt_id}")
 
         img_path = os.path.join("img", f"{shirt_id}.png")
 
         if not os.path.exists(img_path):
 
-            fallback_text = " ".join(
-                [shirt_id] + [f"{k} {v}" for k, v in sizes.items()]
-            )
+            print(f"⚠️ Missing image: {shirt_id}")
+
+            # rebuild original readable line
+            fallback_text = " ".join([shirt_id] + [
+                f"{k} {v}" for k, v in sizes.items()
+            ])
 
             missing.append(fallback_text)
-            log(f"⚠️ MISSING: {shirt_id}")
-            send_text(chat_id, f"(អត់រូប)\n{fallback_text}")
+
+            send_text(
+                chat_id,
+                f" (អត់រូប)\n{fallback_text}"
+            )
+
             continue
 
         caption = " ".join([f"{k} {v}" for k, v in sizes.items()])
 
         try:
+            print(f"📸 Sending image: {shirt_id}")
+
             with open(img_path, "rb") as img:
                 r = requests.post(
                     f"{API_URL}/sendPhoto",
@@ -245,34 +236,48 @@ def send_images(shirt_lines, chat_id):
                 )
 
             if r.ok:
+                print(f"✅ Sent: {shirt_id}")
                 sent += 1
-                log(f"✅ SENT: {shirt_id}")
+            else:
+                print(f"❌ Telegram failed: {r.text}")
 
         except Exception as e:
-            log(f"❌ IMAGE ERROR: {e}")
+            print(f"❌ IMAGE ERROR ({shirt_id}):", e)
 
-    log(f"🏁 DONE | SENT={sent} | MISSING={len(missing)}")
+    # =========================
+    # FINAL SUMMARY
+    # =========================
+    if missing:
+        print("⚠️ MISSING IMAGES:")
+        for m in missing:
+            print(" -", m)
+
+    print(f"🏁 IMAGE DONE | SENT: {sent} | MISSING: {len(missing)}")
+
     return sent
 
 
 # ============================================
-# SHEETS
+# SHEET SAVE
 # ============================================
 
 def save_sheets(parsed):
-
-    log("💾 SHEETS SAVE")
 
     for i in range(SHEET_RETRY):
         try:
             save_package(parsed)
             save_shirt_details(parsed)
-            log("✅ SHEETS DONE")
             return True
 
         except Exception as e:
-            log(f"❌ SHEET ERROR {i+1}: {e}")
-            time.sleep(SHEET_RETRY_DELAY)
+            print(f"❌ SHEET ERROR {i+1}/{SHEET_RETRY}: {e}")
+
+            if i < SHEET_RETRY - 1:
+                print(f"⏳ Retrying in {SHEET_RETRY_DELAY} seconds...")
+                time.sleep(SHEET_RETRY_DELAY)
+
+    print("❌ Google Sheets unavailable after retries.")
+    print("🔄 Exiting imgsender.py so run_bot.py can restart it...")
 
     sys.exit(1)
 
@@ -301,6 +306,7 @@ def count_total_qty(shirts):
 
     for line in shirts:
         tokens = line.split()
+
         if len(tokens) < 3:
             continue
 
@@ -314,7 +320,7 @@ def count_total_qty(shirts):
 
 
 # ============================================
-# MAIN PROCESS (FIXED PROPERLY)
+# MAIN PROCESS
 # ============================================
 
 def process():
@@ -322,27 +328,13 @@ def process():
     global last_update_id
 
     data = get_updates()
-
     if not data.get("ok"):
-        log("❌ GET UPDATES FAILED")
         return
 
-    updates = data.get("result", [])
-
-    if not updates:
-        return  # 🔥 no spam
-
-    log(f"🚀 NEW UPDATE: {len(updates)}")
-
-    for u in updates:
+    for u in data["result"]:
 
         try:
-            update_id = u["update_id"]
-
-            if update_id < last_update_id:
-                continue
-
-            last_update_id = update_id + 1
+            last_update_id = u["update_id"] + 1
 
             msg = u.get("message") or u.get("channel_post") or u.get("edited_message")
             if not msg:
@@ -351,96 +343,82 @@ def process():
             chat_id = msg.get("chat", {}).get("id")
             thread_id = msg.get("message_thread_id")
             text = msg.get("text") or msg.get("caption") or ""
-            photos = msg.get("photo")
 
-            user_id = msg.get("from", {}).get("id", chat_id)
-            mode = get_mode(user_id)
-
-            if mode:
-                if inventory.receive_photo(user_id, chat_id, photos, thread_id): continue
-                if inventory.receive_image_name(user_id, chat_id, text, thread_id): continue
-                if inventory.receive_delete_name(user_id, chat_id, text, thread_id): continue
-                if inventory.receive_delete_confirm(user_id, chat_id, text, thread_id): continue
-                if inventory.receive_replace_confirm(user_id, chat_id, text, thread_id): continue
-
-            cmd = text.lower().split("@")[0].strip()
-            
-            if cmd.startswith("/guide"):
-                log("📖 GUIDE REQUEST")
-
-                guide_text = (
-                    "📖 មគ្គុទេសក៍ប្រើប្រាស់\n\n"
-                    "🖼 មើលរូប - ឆែកមើលរូបក្នុងទិន្នន័យ\n"
-                    "➕ ថែមរូប - ថែមទិន្នន័យ (បន្ថែមរូបថ្មី)\n"
-                    "🗑 លុបរូប - លុបទិន្នន័យ\n"
-                    "🔍 ស្វែងរក - ស្វែងរកទិន្នន័យ\n"
-                    "❌ cancel - បញ្ឈប់ការដំណើរការ\n\n"
-                    "━━━━━━━━━━━━━━━\n"
-                    "💡 របៀបប្រើ:\n"
-                    "1. វាយ command ខាងលើ\n"
-                    "2. bot នឹងសួរបន្ត (if needed)\n"
-                    "3. follow instruction ក្នុង chat\n\n"
-                    "⚠️ ចំណាំ:\n"
-                    "- អាចប្រើ /មើលរូប@botname បាន\n"
-                    "- ឬ /មើលរូប ក៏បាន\n"
-                )
-
-                send_text(chat_id, guide_text, thread_id)
-                continue
-            
-            if cmd.startswith("/មើលរូប"):
-                inventory.view_all_grid(chat_id, thread_id)
+            if chat_id != SOURCE_CHAT_ID or thread_id != SOURCE_THREAD_ID:
                 continue
 
-            if cmd.startswith("/ថែមរូប"):
-                inventory.start_add_image(user_id, chat_id, thread_id)
-                continue
-
-            if cmd.startswith("/លុបរូប"):
-                inventory.start_delete_image(user_id, chat_id, thread_id)
-                continue
-
-            if cmd.startswith("/ស្វែងរក"):
-                keyword = cmd.replace("/ស្វែងរក", "").strip()
-                inventory.search_inventory(chat_id, keyword, thread_id)
-                continue
-
-            if cmd.startswith("/cancel"):
-                inventory.cancel(user_id, chat_id, thread_id)
-                continue
-
-            if not (cmd.startswith("new") or cmd.startswith("cancel")):
+            if not (text.lower().startswith("new") or text.lower().startswith("cancel")):
                 continue
 
             parsed = parse_message(text)
             if not parsed:
                 continue
 
-            parsed["order_id"] = generate_order_id()
+            # =========================
+            # ORDER LOGIC
+            # =========================
 
-            # ============================================
-            # LOG BACK TO SOURCE THREAD
-            # ============================================
+            if parsed["order_type"] == "new":
 
-            send_text(
-                chat_id=chat_id,
-                text=(
-                    "✅ NEW ORDER\n"
-                    f"ID: {parsed['order_id']}\n"
-                    f"Name: {parsed['name']}"
-                ),
-                thread_id=thread_id
-            )
+                parsed["order_id"] = generate_order_id()
+                parsed["cancel_on"] = ""
+
+                send_log_to_source(
+                    f"✅ NEW ORDER\nID: {parsed['order_id']}\nName: {parsed['name']}"
+                )
+
+            elif parsed["order_type"] == "cancel":
+
+                if not order_exists(parsed["cancel_on"]):
+
+                    send_log_to_source(
+                        f"❌ Order {parsed['cancel_on']} not found"
+                    )
+                    print(f"❌ Order {parsed['cancel_on']} not found")
+                    continue
+
+                parsed["order_id"] = generate_order_id()
+
+                send_log_to_source(
+                    f"⚠️ CANCEL ORDER\nCancel On: {parsed['cancel_on']}\nNew ID: {parsed['order_id']}\nName: {parsed['name']}"
+                )
 
             total_qty = count_total_qty(parsed["shirts"])
             msg_text = format_message(parsed, total_qty)
 
-            send_text(TARGET_CHAT_ID, msg_text, thread_id)
-            send_images(parsed["shirts"], TARGET_CHAT_ID)
-            save_sheets(parsed)
+            tg_ok = send_text(TARGET_CHAT_ID, msg_text)
+            img_count = send_images(parsed["shirts"], TARGET_CHAT_ID)
+            sheet_ok = save_sheets(parsed)
+
+            print("\n━━━━━━━━━━━━━━━━━━━━")
+            print("📦 ORDER DONE")
+            print(f"ID     : {parsed['order_id']}")
+            print(f"Name   : {parsed['name']}")
+            print(f"TG     : {'✅' if tg_ok else '❌'}")
+            print(f"Images : {img_count}")
+            print(f"Sheet  : {'✅' if sheet_ok else '❌'}")
+            print("━━━━━━━━━━━━━━━━━━━━\n")
 
         except Exception as e:
-            log(f"❌ ERROR: {e}")
+
+            print("❌ PROCESS ERROR:", e)
+
+            error = str(e)
+
+            if (
+                "Read timed out" in error
+                or "HTTPSConnectionPool" in error
+                or "sheets.googleapis.com" in error
+                or "Connection aborted" in error
+                or "ConnectionResetError" in error
+            ):
+                print("🔄 Fatal network error detected.")
+                print("🔄 Exiting imgsender.py...")
+
+                sys.exit(1)
+
+            # Ignore non-fatal errors
+            continue
 
 
 # ============================================
@@ -449,15 +427,15 @@ def process():
 
 def main():
 
-    log("🤖 BOT STARTED")
+    print("🤖 Bot running...")
 
     while True:
         try:
             process()
+            time.sleep(2)
         except Exception as e:
-            log(f"❌ LOOP ERROR: {e}")
-
-        time.sleep(2)
+            print("❌ LOOP ERROR:", e)
+            time.sleep(5)
 
 
 if __name__ == "__main__":
