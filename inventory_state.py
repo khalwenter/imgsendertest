@@ -158,20 +158,64 @@ def cancel(user_id):
 # ============================================
 # AVAILABLE MODES
 # ============================================
+# ============================================
+# ANALYTICS
+# ============================================
+
 MODE_WAITING_ANALYTICS_DATE = "waiting_analytics_date"
+
+
+# ============================================
+# IMAGE
+# ============================================
 
 MODE_WAITING_PHOTO = "waiting_photo"
 
 MODE_WAITING_IMAGE_NAME = "waiting_image_name"
 
+
+# ============================================
+# DELETE IMAGE
+# ============================================
+
 MODE_WAITING_DELETE_NAME = "waiting_delete_name"
 
 MODE_WAITING_DELETE_CONFIRM = "waiting_delete_confirm"
+
+
+# ============================================
+# RENAME IMAGE
+# ============================================
 
 MODE_WAITING_RENAME_OLD = "waiting_rename_old"
 
 MODE_WAITING_RENAME_NEW = "waiting_rename_new"
 
+
+# ============================================
+# ADD STOCK
+# ============================================
+
+MODE_WAITING_ADDSTOCK_ITEM = "waiting_addstock_item"
+
+MODE_WAITING_ADDSTOCK_SIZE = "waiting_addstock_size"
+
+MODE_WAITING_ADDSTOCK_QTY = "waiting_addstock_qty"
+
+
+# ============================================
+# REMOVE STOCK
+# ============================================
+
+MODE_WAITING_REMOVESTOCK_ITEM = "waiting_removestock_item"
+
+MODE_WAITING_REMOVESTOCK_SIZE = "waiting_removestock_size"
+
+MODE_WAITING_REMOVESTOCK_QTY = "waiting_removestock_qty"
+MODE_WAITING_ADD_IMAGE = "waiting_add_image"
+MODE_WAITING_ADD_ITEM_ID = "waiting_add_item_id"
+MODE_WAITING_ADD_NAME = "waiting_add_name"
+MODE_WAITING_ADD_SIZE_STOCK = "waiting_add_size_stock"
 
 # ============================================
 # DEBUG
@@ -198,3 +242,5 @@ def print_states():
             print()
 
     print("===================================\n")
+
+

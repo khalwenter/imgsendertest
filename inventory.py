@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import tempfile
 from PIL import Image, ImageDraw, ImageFont
@@ -8,11 +9,25 @@ from image_utils import (
     save_inventory_image,
     delete_inventory_image,
     image_exists,
-    get_inventory,
     search_inventory,
 )
 
+from sheet_service import (
+    get_inventory,
+    get_item_sizes,
+    update_stock,
+    inventory_text,
+    sheet4,
+    sheet5,
+    append_stock_log,
+    find_inventory_row,
+)
+
 from inventory_state import (
+    
+    MODE_WAITING_ADD_ITEM_ID,
+    MODE_WAITING_ADD_NAME,
+    MODE_WAITING_ADD_SIZE_STOCK,
     set_state,
     get_state,
     get_mode,
@@ -21,6 +36,7 @@ from inventory_state import (
     clear_state,
     has_state,
 
+    MODE_WAITING_ADD_IMAGE,
     MODE_WAITING_PHOTO,
     MODE_WAITING_IMAGE_NAME,
 
@@ -29,8 +45,23 @@ from inventory_state import (
 
     MODE_WAITING_RENAME_OLD,
     MODE_WAITING_RENAME_NEW,
-)
 
+    MODE_WAITING_ADDSTOCK_ITEM,
+    MODE_WAITING_ADDSTOCK_SIZE,
+    MODE_WAITING_ADDSTOCK_QTY,
+
+    MODE_WAITING_REMOVESTOCK_ITEM,
+    MODE_WAITING_REMOVESTOCK_SIZE,
+    MODE_WAITING_REMOVESTOCK_QTY,
+    MODE_WAITING_ANALYTICS_DATE,
+)
+import re
+
+def safe_filename(name: str):
+    name = name.strip().lower()
+    name = re.sub(r'\s+', '_', name)          # spaces → _
+    name = re.sub(r'[^a-z0-9_]', '', name)    # remove unsafe chars
+    return name
 
 class InventoryManager:
 
@@ -44,39 +75,55 @@ class InventoryManager:
     # ============================================
     def view_all_grid(self, chat_id, thread_id=None):
 
-        import math
-        import tempfile
-        from PIL import Image, ImageDraw, ImageFont
+        rows = sheet4.get_all_values()
 
-        items = get_inventory(self.img_folder)
-
-        if not items:
+        if len(rows) <= 1:
             self.telegram.send_text(chat_id, "📦 Inventory is empty.", thread_id)
             return
 
-        # format data
-        images = [{"path": i["path"], "name": i["name"]} for i in items]
+        # =========================
+        # GROUP DATA
+        # =========================
+        grouped = {}
 
+        for row in rows[1:]:
+            if len(row) < 3:
+                continue
+
+            name = row[0].strip()
+            size = row[1].strip()
+            stock = int(row[2] or 0)
+
+            key = name.upper()
+
+            if key not in grouped:
+                grouped[key] = {
+                    "name": name,
+                    "sizes": {},
+                    "image": os.path.join(self.img_folder, f"{name.lower()}.png")
+                }
+
+            grouped[key]["sizes"][size] = grouped[key]["sizes"].get(size, 0) + stock
+
+        # =========================
+        # GRID SETTINGS
+        # =========================
         MAX_PER_GRID = 40
         cols = 5
         thumb_w, thumb_h = 250, 200
 
-        # ✅ REAL FONT FIX (important)
-        font_size = 25
         try:
-            font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", font_size)
+            font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 20)
         except:
-            try:
-                font = ImageFont.truetype("DejaVuSans.ttf", font_size)
-            except:
-                font = ImageFont.load_default()
+            font = ImageFont.load_default()
+
+        items = list(grouped.values())
 
         def build_grid(chunk, page):
 
             rows = math.ceil(len(chunk) / cols)
-
             cell_w = thumb_w
-            cell_h = thumb_h + 50   # ✅ space for text
+            cell_h = thumb_h + 80
 
             grid = Image.new(
                 "RGB",
@@ -91,34 +138,42 @@ class InventoryManager:
                 r = i // cols
                 c = i % cols
 
+                x = c * cell_w
+                y = r * cell_h
+
+                # =========================
+                # IMAGE
+                # =========================
                 try:
-                    img = Image.open(item["path"]).convert("RGB")
-                    img.thumbnail((thumb_w, thumb_h))
+                    if os.path.exists(item["image"]):
+                        img = Image.open(item["image"]).convert("RGB")
+                        img.thumbnail((thumb_w, thumb_h))
+                        grid.paste(img, (x, y))
+                except:
+                    pass
 
-                    x = c * cell_w
-                    y = r * cell_h
+                # =========================
+                # TEXT
+                # =========================
+                name = item["name"].upper()
 
-                    grid.paste(img, (x, y))
+                size_text = " | ".join(
+                    [f"{s}:{q}" for s, q in item["sizes"].items()]
+                )
 
-                    # ===== TEXT (NAME) =====
-                    name = item["name"]
+                draw.text(
+                    (x + 5, y + thumb_h + 5),
+                    name,
+                    fill=(0, 0, 0),
+                    font=font
+                )
 
-                    # truncate long names
-                    if len(name) > 18:
-                        name = name[:18] + "..."
-
-                    text_x = x + 5
-                    text_y = y + thumb_h + 10
-
-                    draw.text(
-                        (text_x, text_y),
-                        name,
-                        fill=(0, 0, 0),
-                        font=font
-                    )
-
-                except Exception as e:
-                    print("GRID ERROR:", e)
+                draw.text(
+                    (x + 5, y + thumb_h + 30),
+                    size_text,
+                    fill=(50, 50, 50),
+                    font=font
+                )
 
             temp_path = os.path.join(
                 tempfile.gettempdir(),
@@ -130,19 +185,20 @@ class InventoryManager:
             self.telegram.send_photo(
                 chat_id=chat_id,
                 photo_path=temp_path,
-                caption=f"📦 Inventory ({len(chunk)} items) | Page {page+1}",
+                caption=f"📦 Inventory Page {page+1}",
                 thread_id=thread_id
             )
 
-        # split into chunks of 40
+        # =========================
+        # PAGINATION
+        # =========================
         chunks = [
-            images[i:i + MAX_PER_GRID]
-            for i in range(0, len(images), MAX_PER_GRID)
+            items[i:i + MAX_PER_GRID]
+            for i in range(0, len(items), MAX_PER_GRID)
         ]
 
         for page, chunk in enumerate(chunks):
             build_grid(chunk, page)
-
 
 
     # ============================================
@@ -150,7 +206,7 @@ class InventoryManager:
     # ============================================
     def show_inventory(self, chat_id, thread_id=None):
 
-        items = get_inventory(self.img_folder)
+  
 
         if not items:
             self.telegram.send_text(chat_id, "📦 Inventory is empty.", thread_id)
@@ -261,7 +317,7 @@ class InventoryManager:
     # ============================================
     def start_delete_image(self, user_id, chat_id, thread_id=None):
 
-        items = get_inventory(self.img_folder)
+        items = get_inventory()
 
         if not items:
             self.telegram.send_text(chat_id, "📦 Empty.", thread_id)
@@ -368,6 +424,446 @@ class InventoryManager:
         for item in items:
             self.telegram.send_photo(chat_id, item["path"], item["name"], thread_id)
 
+
+    # ============================================
+    # INVENTORY
+    # ============================================
+
+    def show_stock_inventory(self, chat_id, thread_id=None):
+
+        try:
+
+            text = inventory_text()
+
+            if len(text) <= 4000:
+
+                self.telegram.send_text(
+                    chat_id,
+                    text,
+                    thread_id
+                )
+
+                return
+
+            # split long message
+            while len(text):
+
+                chunk = text[:4000]
+
+                self.telegram.send_text(
+                    chat_id,
+                    chunk,
+                    thread_id
+                )
+
+                text = text[4000:]
+
+        except Exception as e:
+
+            self.telegram.send_text(
+                chat_id,
+                f"❌ {e}",
+                thread_id
+            )
+
+    # ============================================
+# ADD STOCK - START
+# ============================================
+
+    def start_add_stock(self, user_id, chat_id, thread_id=None):
+
+        rows = get_inventory()
+
+        if not rows:
+            self.telegram.send_text(
+                chat_id,
+                "📦 Inventory is empty.",
+                thread_id
+            )
+            return
+
+        items = {}
+
+        for row in rows:
+            items[row["name"].lower()] = row["name"]
+
+        text = "📦 Select Item\n\n"
+
+        for item_id, name in sorted(items.items()):
+            text += f"{item_id} - {name}\n"
+
+        set_state(
+            user_id,
+            MODE_WAITING_ADDSTOCK_ITEM
+        )
+
+        self.telegram.send_text(
+            chat_id,
+            text,
+            thread_id
+        )
+
+    # ============================================
+# ADD STOCK - RECEIVE ITEM
+# ============================================
+
+    def receive_addstock_item(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ADDSTOCK_ITEM:
+            return False
+        if text.strip().lower() == "/cancel":
+            self.cancel(user_id, chat_id, thread_id)
+            return True
+        item_name = text.strip().lower()
+
+        sizes = get_item_sizes(item_name)
+
+        if not sizes:
+
+            self.telegram.send_text(
+                chat_id,
+                "❌ Item not found.",
+                thread_id
+            )
+            return True
+
+        update_data(
+            user_id,
+            item_name=item_name
+        )
+
+        set_state(
+            user_id,
+            MODE_WAITING_ADDSTOCK_SIZE,
+            get_data(user_id)
+        )
+
+        msg = f"📦 {item_name.upper()}\n\nAvailable Sizes:\n\n"
+
+        for s in sizes:
+            msg += f"{s['size']} (Stock: {s['stock']})\n"
+
+        msg += "\nReply with the size."
+
+        self.telegram.send_text(
+            chat_id,
+            msg,
+            thread_id
+        )
+
+        return True
+
+# ============================================
+# ADD STOCK - RECEIVE SIZE
+# ============================================
+
+    def receive_addstock_size(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ADDSTOCK_SIZE:
+            return False
+
+        size = text.strip().upper()
+
+        data = get_data(user_id)
+        item_name = data.get("item_name")
+
+        if not item_name:
+            clear_state(user_id)
+            self.telegram.send_text(chat_id, "❌ Session expired.", thread_id)
+            return True
+
+        sizes = get_item_sizes(item_name)
+        valid_sizes = [s["size"].upper() for s in sizes]
+
+        size = size.strip().upper()
+
+        # allow new size, but mark it
+        is_new_size = size not in valid_sizes
+
+        update_data(user_id, size=size)
+        update_data(user_id, is_new_size=is_new_size)
+        
+        set_state(
+            user_id,
+            MODE_WAITING_ADDSTOCK_QTY,
+            get_data(user_id)
+        )
+
+        self.telegram.send_text(
+            chat_id,
+            f"📦 {item_name} - {size}\n\nEnter quantity to ADD:",
+            thread_id
+        )
+
+        return True
+
+# ============================================
+# ADD STOCK - RECEIVE QTY (FINAL STEP)
+# ============================================
+
+    def receive_addstock_qty(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ADDSTOCK_QTY:
+            return False
+
+        data = get_data(user_id)
+
+        item_name = data.get("item_name")
+        size = data.get("size")
+
+        if not item_name or not size:
+            self.telegram.send_text(chat_id, "❌ Session expired.", thread_id)
+            clear_state(user_id)
+            return True
+
+        if not text.isdigit():
+            self.telegram.send_text(chat_id, "❌ Invalid quantity.", thread_id)
+            return True
+
+        qty = int(text)
+
+        # =========================================
+        # SAFE STOCK UPDATE (NO CRASH IF NEW SIZE)
+        # =========================================
+        try:
+            new_stock = update_stock(
+                item_name,
+                size,
+                qty,
+                order_id="MANUAL_ADD"
+            )
+
+        except Exception as e:
+
+            # =========================
+            # SIZE DOES NOT EXIST → CREATE IT
+            # =========================
+            sheet4.append_row([
+                item_name.lower(),
+                size.upper(),
+                qty,
+                "instock",
+                datetime.now().isoformat(),
+                datetime.now().isoformat()
+            ])
+
+            new_stock = qty
+
+            append_stock_log(
+                name=item_name.lower(),
+                size=size.upper(),
+                stock=qty,
+                stock_status="instock",
+                order_id="MANUAL_ADD_NEW"
+            )
+
+
+        clear_state(user_id)
+
+        self.telegram.send_text(
+            chat_id,
+            (
+                f"✅ Stock Added\n\n"
+                f"📦 {item_name.upper()}\n"
+                f"📏 {size}\n"
+                f"➕ {qty}\n"
+                f"📊 Current Stock : {new_stock}"
+            ),
+            thread_id
+        )
+
+        return True
+
+
+# ============================================
+# REMOVE STOCK - START
+# ============================================
+
+    def start_remove_stock(self, user_id, chat_id, thread_id=None):
+
+        rows = get_inventory()
+
+        if not rows:
+            self.telegram.send_text(
+                chat_id,
+                "📦 Inventory is empty.",
+                thread_id
+            )
+            return
+
+        items = {}
+
+        for row in rows:
+            items[row["name"]] = row["name"]
+
+        text = "🗑 Select Item ID to REMOVE STOCK\n\n"
+
+        for item_id, name in sorted(items.items()):
+            text += f"{item_id} - {name}\n"
+
+        set_state(
+            user_id,
+            MODE_WAITING_REMOVESTOCK_ITEM
+        )
+
+        self.telegram.send_text(
+            chat_id,
+            text,
+            thread_id
+        )
+
+    def receive_removestock_item(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_REMOVESTOCK_ITEM:
+            return False
+
+        item_name = text.strip().lower()
+
+        sizes = get_item_sizes(item_name)
+
+        if not sizes:
+
+            self.telegram.send_text(
+                chat_id,
+                "❌ Item not found.",
+                thread_id
+            )
+            return True
+
+        update_data(
+            user_id,
+            item_name=item_name
+        )
+
+        set_state(
+            user_id,
+            MODE_WAITING_REMOVESTOCK_SIZE,
+            get_data(user_id)
+        )
+
+        msg = f"🗑 {item_name.upper()}\n\nAvailable Sizes:\n\n"
+
+        for s in sizes:
+            msg += f"{s['size']} (Stock: {s['stock']})\n"
+
+        msg += "\nReply with size."
+
+        self.telegram.send_text(chat_id, msg, thread_id)
+
+        return True
+
+
+    def receive_removestock_size(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_REMOVESTOCK_SIZE:
+            return False
+
+        size = text.strip().upper()
+
+        data = get_data(user_id)
+        item_name = data.get("item_name")
+
+        if not item_name:
+            clear_state(user_id)
+            self.telegram.send_text(chat_id, "❌ Session expired.", thread_id)
+            return True
+
+        sizes = get_item_sizes(item_name)
+        valid_sizes = [s["size"].upper() for s in sizes]
+
+        if size not in valid_sizes:
+
+            self.telegram.send_text(
+                chat_id,
+                f"❌ Invalid size.\nAvailable: {', '.join(valid_sizes)}",
+                thread_id
+            )
+            return True
+
+        update_data(user_id, size=size)
+
+        set_state(
+            user_id,
+            MODE_WAITING_REMOVESTOCK_QTY,
+            get_data(user_id)
+        )
+
+        self.telegram.send_text(
+            chat_id,
+            f"🗑 {item_name} - {size}\n\nEnter quantity to REMOVE:",
+            thread_id
+        )
+
+        return True
+
+
+    def receive_removestock_qty(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_REMOVESTOCK_QTY:
+            return False
+
+        qty_text = text.strip()
+
+        if not qty_text.isdigit():
+
+            self.telegram.send_text(
+                chat_id,
+                "❌ Please enter a valid number.",
+                thread_id
+            )
+            return True
+
+        qty = int(qty_text)
+
+        if qty <= 0:
+
+            self.telegram.send_text(
+                chat_id,
+                "❌ Quantity must be > 0.",
+                thread_id
+            )
+            return True
+
+        data = get_data(user_id)
+
+        item_name = data.get("item_name")
+        size = data.get("size")
+
+        if not item_name or not size:
+
+            clear_state(user_id)
+
+            self.telegram.send_text(
+                chat_id,
+                "❌ Session expired.",
+                thread_id
+            )
+
+            return True
+
+        try:
+            update_stock(item_name, size, -qty)
+
+        except Exception as e:
+
+            self.telegram.send_text(
+                chat_id,
+                f"❌ Failed:\n{e}",
+                thread_id
+            )
+
+            return True
+
+        clear_state(user_id)
+
+        self.telegram.send_text(
+            chat_id,
+            f"✅ Stock Removed\n\n{item_name} - {size} - {qty}",
+            thread_id
+        )
+
+        return True
+
     # ============================================
     # CANCEL
     # ============================================
@@ -375,16 +871,24 @@ class InventoryManager:
 
         state = get_state(user_id)
 
+        # delete temp files if any
         if state:
             data = state.get("data", {})
             temp = data.get("temp_file")
 
             if temp and os.path.exists(temp):
-                os.remove(temp)
+                try:
+                    os.remove(temp)
+                except:
+                    pass
 
         clear_state(user_id)
-        self.telegram.send_text(chat_id, "Cancelled", thread_id)
 
+        self.telegram.send_text(
+            chat_id,
+            "❌ Cancelled. All current operation stopped.",
+            thread_id
+        )
    # ============================================
     # Analytics Flow
     # ============================================
@@ -408,6 +912,7 @@ class InventoryManager:
     # Analytics Flow
     # ============================================
     def receive_analytics_date(self, user_id, chat_id, text, thread_id=None):
+    
 
         if get_mode(user_id) != MODE_WAITING_ANALYTICS_DATE:
             return False
@@ -436,5 +941,136 @@ class InventoryManager:
                 f"❌ Error fetching data: {e}",
                 thread_id
             )
+
+        return True
+    
+
+    def start_add_image(self, user_id, chat_id, thread_id=None):
+
+        set_state(user_id, MODE_WAITING_ADD_IMAGE)
+
+        self.telegram.send_text(
+            chat_id,
+            "📷 Send product image first",
+            thread_id
+        )
+
+    def receive_add_image(self, user_id, chat_id, photos, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ADD_IMAGE:
+            return False
+
+        if not photos:
+            self.telegram.send_text(chat_id, "❌ No photo", thread_id)
+            return True
+
+        file_id = photos[-1]["file_id"]
+        temp_path = os.path.join(tempfile.gettempdir(), f"{file_id}.jpg")
+
+        if not self.telegram.download_file(file_id, temp_path):
+            self.telegram.send_text(chat_id, "❌ Download failed", thread_id)
+            return True
+
+        update_data(user_id, temp_file=temp_path)
+
+        update_data(user_id, temp_file=temp_path)
+
+        set_state(user_id, MODE_WAITING_ADD_NAME, get_data(user_id))
+
+        self.telegram.send_text(
+            chat_id,
+            "📝 Enter product name",
+            thread_id
+        )
+
+        return True
+    
+
+
+    def receive_add_name(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ADD_NAME:
+            return False
+
+        name = text.strip()
+
+        update_data(user_id, name=name)
+
+        set_state(user_id, MODE_WAITING_ADD_SIZE_STOCK, get_data(user_id))
+
+        self.telegram.send_text(
+            chat_id,
+            "📦 Enter sizes + stock like:\nS 10\nM 5\nL 2",
+            thread_id
+        )
+
+        return True
+
+
+    def receive_add_size_stock(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_ADD_SIZE_STOCK:
+            return False
+
+        data = get_data(user_id)
+
+        from sheet_service import sheet4
+
+        name = data.get("name").strip().lower()
+        temp_file = data.get("temp_file")
+
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+        rows = []
+
+        for line in lines:
+            parts = line.split()
+
+            if len(parts) != 2:
+                continue
+
+            size = parts[0].upper()
+
+            try:
+                stock = int(parts[1])
+            except ValueError:
+                continue
+
+            rows.append([
+                name,
+                size,
+                stock,
+                "",
+                datetime.now().isoformat(),
+                datetime.now().isoformat()
+            ])
+
+        # Save image
+        filename = safe_filename(name)
+        img_path = os.path.join("img", f"{filename}.png")
+
+        if temp_file and os.path.exists(temp_file):
+            os.rename(temp_file, img_path)
+
+        # Save inventory
+        if rows:
+            sheet4.append_rows(rows)
+        for row in rows:
+            append_stock_log(
+                name=row[0],
+                size=row[1],
+                stock=row[2],
+                stock_status="INIT_ADD",
+                order_id="ADD_IMAGE"
+            )
+        clear_state(user_id)
+
+        self.telegram.send_text(
+            chat_id,
+            f"✅ Created item\n"
+            f"📦 Name: {name}\n"
+            f"📏 Sizes: {len(rows)}",
+            thread_id
+        )
 
         return True

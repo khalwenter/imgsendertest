@@ -242,28 +242,28 @@ def image_exists(
 # LIST INVENTORY
 # ============================================
 
-def get_inventory(folder="img"):
+def get_inventory(img_folder):
 
-    ensure_folder(folder)
+    items = []
 
-    images = []
+    for file in os.listdir(img_folder):
 
-    for f in sorted(os.listdir(folder)):
+        if not file.endswith(".png"):
+            continue
 
-        if f.lower().endswith(".png"):
+        name = file.replace(".png", "")
 
-            images.append({
-                "name": os.path.splitext(f)[0],
-                "path": os.path.join(folder, f),
-                "size_mb": round(
-                    os.path.getsize(
-                        os.path.join(folder, f)
-                    ) / 1024 / 1024,
-                    2
-                )
-            })
+        path = os.path.join(img_folder, file)
 
-    return images
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+
+        items.append({
+            "name": name,
+            "path": path,
+            "size_mb": size_mb
+        })
+
+    return items
 
 
 # ============================================

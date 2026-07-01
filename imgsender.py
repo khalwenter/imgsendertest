@@ -6,12 +6,17 @@ import sys
 
 from datetime import datetime
 from collections import defaultdict
-
 from sheet_service import (
     save_package,
     save_shirt_details,
     generate_order_id,
-    order_exists
+    order_exists,
+    update_stock,
+    restore_stock_from_order,
+    get_order_shirts,
+    sheet4,
+    sheet5,
+    append_stock_log,
 )
 
 from inventory import InventoryManager
@@ -22,13 +27,13 @@ from inventory_state import get_mode
 # CONFIG
 # ============================================
 
-BOT_TOKEN = "8497104307:AAHQiYmehz2ksg-GqdFpvIvAgx6V_PT4weQ"
+BOT_TOKEN = "7479661726:AAFKFBbOK4dkZRBZ8QkeyrVLcxkkLg8k8go"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-SOURCE_CHAT_ID = -1002870542147
-SOURCE_THREAD_ID = 473
+SOURCE_CHAT_ID = -1004220516742
+SOURCE_THREAD_ID = 4
 
-TARGET_CHAT_ID = -4942287748
+TARGET_CHAT_ID = -5144551975
 
 
 REQUEST_TIMEOUT = 60
@@ -128,11 +133,9 @@ def parse_command(text):
     if first == "new":
         return "new", ""
 
-    m = re.match(r"cancel\s*:\s*(ORD\d+)", first, re.IGNORECASE)
+    m = re.match(r"(?:/cancel|cancel)\s*[:\-]?\s*(ORD\d+)", first, re.IGNORECASE)
     if m:
         return "cancel", m.group(1).upper()
-
-    return "normal", ""
 
 
 # ============================================
@@ -189,7 +192,6 @@ def parse_message(text):
         "order_type": order_type,
         "cancel_on": cancel_on
     }
-
 
 # ============================================
 # IMAGE SENDING
@@ -364,9 +366,17 @@ def process():
                 if inventory.receive_delete_name(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_delete_confirm(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_replace_confirm(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_addstock_item(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_addstock_size(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_addstock_qty(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_removestock_item(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_removestock_size(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_removestock_qty(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_add_image(user_id, chat_id, photos, thread_id): continue
+                if inventory.receive_add_name(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_add_size_stock(user_id, chat_id, text, thread_id): continue
 
             cmd = text.lower().split("@")[0].strip()
-            
             if cmd.startswith("/guide"):
 
                 log("📖 GUIDE REQUEST")
@@ -388,7 +398,8 @@ def process():
                     "    • ស្វែងរករូបអាវតាមឈ្មោះ\n"
                     "    • ឧទាហរណ៍៖\n"
                     "      /ស្វែងរក a001\n\n"
-
+                    "📦 /inventory\n"
+                    "    • View stock quantity\n"
                     "📊 /analytics\n"
                     "    • មើលស្ថិតិការលក់\n\n"
                     "    ឧទាហរណ៍៖\n"
@@ -408,9 +419,25 @@ def process():
 
                 send_text(chat_id, guide_text, thread_id)
                 continue
-                        
+
             if cmd.startswith("/មើលរូប"):
                 inventory.view_all_grid(chat_id, thread_id)
+                continue
+
+            if cmd.startswith("/inventory"):
+                inventory.show_stock_inventory(chat_id, thread_id)
+                continue
+
+            if cmd.startswith("/addstock"):
+                inventory.start_add_stock(
+                    user_id,
+                    chat_id,
+                    thread_id
+                )
+                continue
+
+            if cmd.startswith("/removestock"):
+                inventory.start_remove_stock(user_id, chat_id, thread_id)
                 continue
 
             if cmd.startswith("/ថែមរូប"):
@@ -495,38 +522,166 @@ def process():
                 continue
 
             parsed = parse_message(text)
+
             if not parsed:
                 continue
 
-            try:
-                parsed["order_id"] = generate_order_id()
-            except Exception as e:
-                log(f"ORDER ID FAIL: {e}")
+            # =========================
+            # CANCEL ORDER FLOW
+            # =========================
+            if parsed["order_type"] == "cancel":
+
+                try:
+                    old_order_id = parsed["cancel_on"]
+
+                    order_data = get_order_shirts(old_order_id)
+                    if not order_data:
+                        send_text(chat_id, "❌ Order not found", thread_id)
+                        continue
+
+                    # =========================================
+                    # 1. RESTORE OLD ORDER STOCK (UNDO ORDER)
+                    # =========================================
+                    for line in order_data["shirts"]:
+                        tokens = line.split()
+                        if len(tokens) < 3:
+                            continue
+
+                        item_name = tokens[0].strip().lower()
+                        pairs = list(zip(tokens[1::2], tokens[2::2]))
+
+                        for size, qty in pairs:
+                            if not str(qty).isdigit():
+                                continue
+
+                            qty = int(qty)
+
+                            # 🔼 restore stock back
+                            update_stock(
+                                item_name,
+                                size,
+                                qty,
+                                order_id=f"CANCEL_{old_order_id}"
+                            )
+
+                            
+
+                    # =========================================
+                    # 2. CREATE CANCELLED ORDER RECORD
+                    # =========================================
+                    parsed["order_id"] = generate_order_id()
+                    parsed["cancel_on"] = old_order_id
+
+                    save_sheets(parsed)
+
+                    # =========================================
+                    # 3. APPLY NEW CANCELLED ORDER (optional re-log)
+                    # =========================================
+                    for line in parsed["shirts"]:
+                        tokens = line.split()
+                        if len(tokens) < 3:
+                            continue
+
+                        item_name = tokens[0].strip().lower()
+                        pairs = list(zip(tokens[1::2], tokens[2::2]))
+
+                        for size, qty in pairs:
+                            if not str(qty).isdigit():
+                                continue
+
+                            qty = int(qty)
+
+                            # 🔽 decrease stock again (cancel replacement logic)
+                            update_stock(
+                                item_name,
+                                size,
+                                -qty,
+                                order_id=parsed["order_id"]
+                            )
+
+                          
+
+                    # =========================================
+                    # RESPONSE
+                    # =========================================
+                    send_text(
+                        chat_id=chat_id,
+                        thread_id=thread_id,
+                        text=(
+                            "♻️ CANCELLED ORDER RE-REGISTERED\n"
+                            f"New ID: {parsed['order_id']}\n"
+                            f"Name: {parsed['name']}\n"
+                            f"Cancelled: {old_order_id}"
+                        )
+                    )
+
+                    msg_text = format_message(parsed, count_total_qty(parsed["shirts"]))
+                    send_text(TARGET_CHAT_ID, msg_text)
+                    send_images(parsed["shirts"], TARGET_CHAT_ID)
+
+                except Exception as e:
+                    log(f"❌ CANCEL ERROR: {e}")
+                    send_text(chat_id, f"❌ Cancel failed: {e}", thread_id)
+
                 continue
 
-            # ============================================
-            # LOG BACK TO SOURCE THREAD
-            # ============================================
+            # =========================
+            # NEW ORDER FLOW
+            # =========================
+            try:
 
-            send_text(
-                chat_id=chat_id,
-                text=(
-                    "✅ NEW ORDER\n"
-                    f"ID: {parsed['order_id']}\n"
-                    f"Name: {parsed['name']}"
-                ),
-                thread_id=thread_id
-            )
+                parsed["order_id"] = generate_order_id()
 
-            total_qty = count_total_qty(parsed["shirts"])
-            msg_text = format_message(parsed, total_qty)
+                save_sheets(parsed)
 
-            send_text(TARGET_CHAT_ID, msg_text, thread_id)
-            send_images(parsed["shirts"], TARGET_CHAT_ID)
-            save_sheets(parsed)
+                # =========================================
+                # UPDATE STOCK + SHEET5 LOG (NEW ORDER)
+                # =========================================
+                for line in parsed["shirts"]:
+                    tokens = line.split()
+                    if len(tokens) < 3:
+                        continue
+
+                    item_name = tokens[0].strip().lower()
+                    pairs = list(zip(tokens[1::2], tokens[2::2]))
+
+                    for size, qty in pairs:
+                        if not str(qty).isdigit():
+                            continue
+
+                        qty = int(qty)
+
+                        # 🔻 reduce stock
+                        update_stock(
+                            item_name,
+                            size,
+                            -qty,
+                            order_id=parsed["order_id"]
+                        )
+
+                      
+                 
+
+                send_text(
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                    text=(
+                        "✅ NEW ORDER\n"
+                        f"ID: {parsed['order_id']}\n"
+                        f"Name: {parsed['name']}"
+                    )
+                )
+
+                msg_text = format_message(parsed, count_total_qty(parsed["shirts"]))
+                send_text(TARGET_CHAT_ID, msg_text)
+                send_images(parsed["shirts"], TARGET_CHAT_ID)
+
+            except Exception as e:
+                log(f"❌ NEW ORDER ERROR: {e}")
+                send_text(chat_id, f"❌ Failed to process order: {e}", thread_id)
 
         except Exception as e:
-            log(f"❌ ERROR: {e}")
+            log(f"❌ UPDATE PROCESSING ERROR: {e}")
 
 
 # ============================================
