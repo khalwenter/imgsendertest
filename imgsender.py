@@ -384,44 +384,75 @@ def process():
                 guide_text = (
                     "📖 មគ្គុទេសក៍ប្រើប្រាស់ Bot\n\n"
 
-                    "📦 គ្រប់គ្រងរូបភាព\n"
+                    "🖼 រូបភាព\n"
                     "🖼 /មើលរូប\n"
-                    "    • ឆែកមើលរូបទាំងអស់ក្នុងទិន្នន័យ\n\n"
+                    "    • មើលរូបអាវទាំងអស់ជា Grid\n\n"
 
-                    "➕ /ថែមរូប\n"
-                    "    • បន្ថែមរូបអាវថ្មីទៅក្នុងទិន្នន័យ\n\n"
-
-                    "🗑 /លុបរូប\n"
-                    "    • លុបរូបចេញពីទិន្នន័យ\n\n"
+                    "🖼 /មើលរូប <Size>\n"
+                    "    • មើលរូបតាម Size ជា Grid\n"
+                    "    • ឧទាហរណ៍៖\n"
+                    "      /មើលរូប S\n"
+                    "      /មើលរូប M\n"
+                    "      /មើលរូប XL\n\n"
 
                     "🔍 /ស្វែងរក <ឈ្មោះ>\n"
                     "    • ស្វែងរករូបអាវតាមឈ្មោះ\n"
                     "    • ឧទាហរណ៍៖\n"
                     "      /ស្វែងរក a001\n\n"
+
+                    "➕ /ថែមរូប\n"
+                    "    • បន្ថែមរូបអាវថ្មី និង Stock ដំបូង\n\n"
+
+                    "🗑 /លុបរូប\n"
+                    "    • លុបរូបអាវចេញពីប្រព័ន្ធ\n\n"
+
+                    "📦 Stock\n"
                     "📦 /inventory\n"
-                    "    • View stock quantity\n"
-                    "📊 /analytics\n"
-                    "    • មើលស្ថិតិការលក់\n\n"
-                    "    ឧទាហរណ៍៖\n"
-                    "    /analytics today\n"
-                    "    /analytics 29/06/26\n"
-                    "    /analytics 28/06/26 29/06/26\n\n"
+                    "    • មើល Stock ទាំងអស់\n\n"
+
+                    "➕ /addstock\n"
+                    "    • បន្ថែម Stock ទៅ Size ណាមួយ\n"
+                    "    • អាចបន្ថែម Size ថ្មីបាន\n\n"
+
+                    "➖ /removestock\n"
+                    "    • ដក Stock ចេញពី Size ណាមួយ\n\n"
+
+                    "📊 Analytics\n"
+                    "📊 /analytics today\n"
+                    "    • មើលស្ថិតិថ្ងៃនេះ\n\n"
+
+                    "📊 /analytics DD/MM/YY\n"
+                    "    • មើលស្ថិតិតាមថ្ងៃ\n\n"
+
+                    "📊 /analytics DD/MM/YY DD/MM/YY\n"
+                    "    • មើលស្ថិតិចន្លោះថ្ងៃ\n\n"
 
                     "❌ /cancel\n"
                     "    • បញ្ឈប់ប្រតិបត្តិការដែលកំពុងដំណើរការ\n\n"
 
                     "━━━━━━━━━━━━━━━━━━━━━━\n"
                     "💡 ចំណាំ\n"
-                    "• Commands អាចប្រើក្នុង Group ឬ Topic បាន\n"
-                    "• សម្រាប់ការបន្ថែមរូប Bot នឹងណែនាំជាជំហានៗ\n"
-                    "• ថ្ងៃខែឆ្នាំត្រូវប្រើទម្រង់ dd/mm/yy\n"
+                    "• Commands អាចប្រើក្នុង Group និង Topic បាន\n"
+                    "• /ថែមរូប នឹងណែនាំជាជំហានៗរហូតដល់បញ្ចប់\n"
+                    "• /addstock និង /removestock នឹងណែនាំជាជំហានៗ\n"
+                    "• ថ្ងៃខែឆ្នាំប្រើទម្រង់ DD/MM/YY"
                 )
-
                 send_text(chat_id, guide_text, thread_id)
                 continue
 
             if cmd.startswith("/មើលរូប"):
-                inventory.view_all_grid(chat_id, thread_id)
+
+                parts = text.strip().split(maxsplit=1)
+
+                if len(parts) == 1:
+                    inventory.view_all_grid(chat_id, thread_id)
+                else:
+                    inventory.view_all_grid(
+                        chat_id,
+                        thread_id,
+                        size_filter=parts[1].strip().upper()
+                    )
+
                 continue
 
             if cmd.startswith("/inventory"):

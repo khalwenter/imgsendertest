@@ -73,7 +73,7 @@ class InventoryManager:
     # ============================================
     # FAST VIEW ALL GRID (OPTIMIZED)
     # ============================================
-    def view_all_grid(self, chat_id, thread_id=None):
+    def view_all_grid(self, chat_id, thread_id=None, size_filter=None):
 
         rows = sheet4.get_all_values()
 
@@ -91,9 +91,12 @@ class InventoryManager:
                 continue
 
             name = row[0].strip()
-            size = row[1].strip()
+            size = row[1].strip().upper()
             stock = int(row[2] or 0)
 
+            # filter by size if requested
+            if size_filter and size != size_filter.upper():
+                continue
             key = name.upper()
 
             if key not in grouped:
@@ -118,7 +121,13 @@ class InventoryManager:
             font = ImageFont.load_default()
 
         items = list(grouped.values())
-
+        if not items:
+            self.telegram.send_text(
+                chat_id,
+                f"❌ No inventory found for size {size_filter.upper()}",
+                thread_id
+            )
+            return
         def build_grid(chunk, page):
 
             rows = math.ceil(len(chunk) / cols)
@@ -1014,47 +1023,67 @@ class InventoryManager:
 
         data = get_data(user_id)
 
-        from sheet_service import sheet4
-
-        name = data.get("name").strip().lower()
+        name = data.get("name")
         temp_file = data.get("temp_file")
 
-        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        if not name:
+            clear_state(user_id)
+            self.telegram.send_text(chat_id, "❌ Session expired.", thread_id)
+            return True
+
+        name = name.strip().lower()
+
+        # =========================
+        # PARSE INPUT FLEXIBLY
+        # =========================
+        tokens = text.replace("\n", " ").split()
 
         rows = []
+        i = 0
 
-        for line in lines:
-            parts = line.split()
+        while i < len(tokens) - 1:
+            size = tokens[i].upper()
+            qty = tokens[i + 1]
 
-            if len(parts) != 2:
-                continue
+            # only accept valid number pairs
+            if qty.isdigit():
+                rows.append([
+                    name,
+                    size,
+                    int(qty),
+                    "",
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat()
+                ])
+                i += 2
+            else:
+                i += 1  # skip broken token
 
-            size = parts[0].upper()
+        # =========================
+        # VALIDATION
+        # =========================
+        if not rows:
+            self.telegram.send_text(
+                chat_id,
+                "❌ Invalid format.\nUse:\nS 10 M 5 L 2",
+                thread_id
+            )
+            return True
 
-            try:
-                stock = int(parts[1])
-            except ValueError:
-                continue
-
-            rows.append([
-                name,
-                size,
-                stock,
-                "",
-                datetime.now().isoformat(),
-                datetime.now().isoformat()
-            ])
-
-        # Save image
+        # =========================
+        # SAVE IMAGE ONLY WHEN VALID
+        # =========================
         filename = safe_filename(name)
         img_path = os.path.join("img", f"{filename}.png")
 
         if temp_file and os.path.exists(temp_file):
             os.rename(temp_file, img_path)
 
-        # Save inventory
-        if rows:
-            sheet4.append_rows(rows)
+        # =========================
+        # SAVE SHEET
+        # =========================
+        sheet4.append_rows(rows)
+
         for row in rows:
             append_stock_log(
                 name=row[0],
@@ -1063,13 +1092,20 @@ class InventoryManager:
                 stock_status="INIT_ADD",
                 order_id="ADD_IMAGE"
             )
+
         clear_state(user_id)
 
+        # =========================
+        # RESPONSE
+        # =========================
         self.telegram.send_text(
             chat_id,
-            f"✅ Created item\n"
-            f"📦 Name: {name}\n"
-            f"📏 Sizes: {len(rows)}",
+            (
+                f"✅ Created item\n\n"
+                f"📦 Name: {name}\n"
+                f"📏 Sizes: {len(rows)}\n"
+                f"📊 Total Stock: {sum(r[2] for r in rows)}"
+            ),
             thread_id
         )
 
