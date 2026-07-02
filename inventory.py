@@ -28,6 +28,8 @@ from inventory_state import (
     MODE_WAITING_ADD_ITEM_ID,
     MODE_WAITING_ADD_NAME,
     MODE_WAITING_ADD_SIZE_STOCK,
+    MODE_WAITING_DELETESTOCK_ITEM,
+    MODE_WAITING_DELETESTOCK_SIZE,
     set_state,
     get_state,
     get_mode,
@@ -257,7 +259,8 @@ class InventoryManager:
         )
 
     def receive_photo(self, user_id, chat_id, photos, thread_id=None):
-
+        if self.check_cancel("", user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_PHOTO:
             return False
 
@@ -280,7 +283,8 @@ class InventoryManager:
         return True
 
     def receive_image_name(self, user_id, chat_id, image_name, thread_id=None):
-
+        if self.check_cancel(image_name, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_IMAGE_NAME:
             return False
 
@@ -341,7 +345,8 @@ class InventoryManager:
         self.telegram.send_text(chat_id, text, thread_id)
 
     def receive_delete_name(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_DELETE_NAME:
             return False
 
@@ -359,7 +364,8 @@ class InventoryManager:
         return True
 
     def receive_delete_confirm(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_DELETE_CONFIRM:
             return False
 
@@ -387,7 +393,8 @@ class InventoryManager:
     # REPLACE CONFIRM
     # ============================================
     def receive_replace_confirm(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         state = get_state(user_id)
         if not state or state["mode"] != "waiting_replace_confirm":
             return False
@@ -517,12 +524,11 @@ class InventoryManager:
 # ============================================
 
     def receive_addstock_item(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ADDSTOCK_ITEM:
             return False
-        if text.strip().lower() == "/cancel":
-            self.cancel(user_id, chat_id, thread_id)
-            return True
+
         item_name = text.strip().lower()
 
         sizes = get_item_sizes(item_name)
@@ -567,7 +573,8 @@ class InventoryManager:
 # ============================================
 
     def receive_addstock_size(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ADDSTOCK_SIZE:
             return False
 
@@ -611,7 +618,8 @@ class InventoryManager:
 # ============================================
 
     def receive_addstock_qty(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ADDSTOCK_QTY:
             return False
 
@@ -722,7 +730,8 @@ class InventoryManager:
         )
 
     def receive_removestock_item(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_REMOVESTOCK_ITEM:
             return False
 
@@ -763,7 +772,8 @@ class InventoryManager:
 
 
     def receive_removestock_size(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_REMOVESTOCK_SIZE:
             return False
 
@@ -807,7 +817,8 @@ class InventoryManager:
 
 
     def receive_removestock_qty(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_REMOVESTOCK_QTY:
             return False
 
@@ -873,9 +884,68 @@ class InventoryManager:
 
         return True
 
+
+
+    def start_delete_stock(self, user_id, chat_id, thread_id=None):
+
+        rows = get_inventory()
+
+        if not rows:
+            self.telegram.send_text(chat_id, "📦 Inventory is empty.", thread_id)
+            return
+
+        items = {}
+        for row in rows:
+            items[row["name"].lower()] = row["name"]
+
+        text = "🗑 Delete Stock\n\nSelect Item:\n\n"
+
+        for k, v in sorted(items.items()):
+            text += f"{k} - {v}\n"
+
+        set_state(user_id, MODE_WAITING_DELETESTOCK_ITEM)
+
+        self.telegram.send_text(chat_id, text, thread_id)
+
+
+    def receive_deletestock_item(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_DELETESTOCK_ITEM:
+            return False
+
+        if text.strip().lower() == "/cancel":
+            self.cancel(user_id, chat_id, thread_id)
+            return True
+
+        item_name = text.strip().lower()
+
+        sizes = get_item_sizes(item_name)
+
+        if not sizes:
+            self.telegram.send_text(chat_id, "❌ Item not found.", thread_id)
+            return True
+
+        update_data(user_id, item_name=item_name)
+        set_state(user_id, MODE_WAITING_DELETESTOCK_SIZE, get_data(user_id))
+
+        msg = f"🗑 {item_name.upper()}\n\nAvailable Sizes:\n\n"
+
+        for s in sizes:
+            msg += f"{s['size']} (Stock: {s['stock']})\n"
+
+        msg += "\nReply with size to delete."
+
+        self.telegram.send_text(chat_id, msg, thread_id)
+
+        return True
     # ============================================
     # CANCEL
     # ============================================
+    def check_cancel(self, text, user_id, chat_id, thread_id):
+        if text.strip().lower() == "/cancel":
+            self.cancel(user_id, chat_id, thread_id)
+            return True
+        return False
     def cancel(self, user_id, chat_id, thread_id=None):
 
         state = get_state(user_id)
@@ -898,6 +968,68 @@ class InventoryManager:
             "❌ Cancelled. All current operation stopped.",
             thread_id
         )
+
+
+    def receive_deletestock_size(self, user_id, chat_id, text, thread_id=None):
+
+        if get_mode(user_id) != MODE_WAITING_DELETESTOCK_SIZE:
+            return False
+
+        if text.strip().lower() == "/cancel":
+            self.cancel(user_id, chat_id, thread_id)
+            return True
+
+        size = text.strip().upper()
+
+        data = get_data(user_id)
+        item_name = data.get("item_name")
+
+        if not item_name:
+            clear_state(user_id)
+            self.telegram.send_text(chat_id, "❌ Session expired.", thread_id)
+            return True
+
+        sizes = get_item_sizes(item_name)
+        valid_sizes = [s["size"].upper() for s in sizes]
+
+        if size not in valid_sizes:
+            self.telegram.send_text(
+                chat_id,
+                f"❌ Invalid size.\nAvailable: {', '.join(valid_sizes)}",
+                thread_id
+            )
+            return True
+
+        # =========================
+        # DELETE ROW FROM SHEET
+        # =========================
+        try:
+            rows = sheet4.get_all_values()
+
+            for i, row in enumerate(rows):
+                if i == 0:
+                    continue  # header
+
+                r_name = row[0].strip().lower()
+                r_size = row[1].strip().upper()
+
+                if r_name == item_name and r_size == size:
+                    sheet4.delete_rows(i + 1)  # +1 because sheet index starts at 1
+                    break
+
+        except Exception as e:
+            self.telegram.send_text(chat_id, f"❌ Delete failed: {e}", thread_id)
+            return True
+
+        clear_state(user_id)
+
+        self.telegram.send_text(
+            chat_id,
+            f"✅ Deleted stock\n\n📦 {item_name}\n📏 {size}",
+            thread_id
+        )
+
+        return True
    # ============================================
     # Analytics Flow
     # ============================================
@@ -922,7 +1054,8 @@ class InventoryManager:
     # ============================================
     def receive_analytics_date(self, user_id, chat_id, text, thread_id=None):
     
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ANALYTICS_DATE:
             return False
 
@@ -965,7 +1098,8 @@ class InventoryManager:
         )
 
     def receive_add_image(self, user_id, chat_id, photos, thread_id=None):
-
+        if self.check_cancel("", user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ADD_IMAGE:
             return False
 
@@ -997,7 +1131,8 @@ class InventoryManager:
 
 
     def receive_add_name(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ADD_NAME:
             return False
 
@@ -1017,7 +1152,8 @@ class InventoryManager:
 
 
     def receive_add_size_stock(self, user_id, chat_id, text, thread_id=None):
-
+        if self.check_cancel(text, user_id, chat_id, thread_id):
+            return True
         if get_mode(user_id) != MODE_WAITING_ADD_SIZE_STOCK:
             return False
 

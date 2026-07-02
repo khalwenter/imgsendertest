@@ -217,6 +217,10 @@ MODE_WAITING_ADD_ITEM_ID = "waiting_add_item_id"
 MODE_WAITING_ADD_NAME = "waiting_add_name"
 MODE_WAITING_ADD_SIZE_STOCK = "waiting_add_size_stock"
 
+
+MODE_WAITING_DELETESTOCK_ITEM = "waiting_deletestock_item"
+MODE_WAITING_DELETESTOCK_SIZE = "waiting_deletestock_size"
+
 # ============================================
 # DEBUG
 # ============================================

@@ -366,6 +366,8 @@ def process():
                 if inventory.receive_delete_name(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_delete_confirm(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_replace_confirm(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_deletestock_item(user_id, chat_id, text, thread_id): continue
+                if inventory.receive_deletestock_size(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_addstock_item(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_addstock_size(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_addstock_qty(user_id, chat_id, text, thread_id): continue
@@ -375,7 +377,7 @@ def process():
                 if inventory.receive_add_image(user_id, chat_id, photos, thread_id): continue
                 if inventory.receive_add_name(user_id, chat_id, text, thread_id): continue
                 if inventory.receive_add_size_stock(user_id, chat_id, text, thread_id): continue
-
+                
             cmd = text.lower().split("@")[0].strip()
             if cmd.startswith("/guide"):
 
@@ -470,6 +472,11 @@ def process():
             if cmd.startswith("/removestock"):
                 inventory.start_remove_stock(user_id, chat_id, thread_id)
                 continue
+
+            if cmd.startswith("/deletestock"):
+                inventory.start_delete_stock(user_id, chat_id, thread_id)
+                continue
+
 
             if cmd.startswith("/ថែមរូប"):
                 inventory.start_add_image(user_id, chat_id, thread_id)
